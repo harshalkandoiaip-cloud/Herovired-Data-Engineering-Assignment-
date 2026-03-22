@@ -1,0 +1,224 @@
+{
+  "name": "SmartGear_RawToBronze_Pipeline",
+  "properties": {
+    "description": "Parameterized pipeline to copy SmartGear sales CSV from raw ADLS layer to bronze Delta table via Databricks.",
+    "parameters": {
+      "p_year": {
+        "type": "String",
+        "defaultValue": "@formatDateTime(utcNow(), 'yyyy')"
+      },
+      "p_month": {
+        "type": "String",
+        "defaultValue": "@formatDateTime(utcNow(), 'MM')"
+      },
+      "p_source_file": {
+        "type": "String",
+        "defaultValue": "smartgear_sales.csv"
+      }
+    },
+    "variables": {
+      "raw_path": {
+        "type": "String"
+      },
+      "bronze_path": {
+        "type": "String"
+      }
+    },
+    "activities": [
+      {
+        "name": "Set_RawPath",
+        "type": "SetVariable",
+        "dependsOn": [],
+        "userProperties": [],
+        "typeProperties": {
+          "variableName": "raw_path",
+          "value": {
+            "value": "sales/year=@{pipeline().parameters.p_year}/month=@{pipeline().parameters.p_month}/@{pipeline().parameters.p_source_file}",
+            "type": "Expression"
+          }
+        }
+      },
+      {
+        "name": "Copy_Raw_To_Bronze",
+        "type": "Copy",
+        "dependsOn": [
+          { "activity": "Set_RawPath", "dependencyConditions": ["Succeeded"] }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "source": {
+            "type": "DelimitedTextSource",
+            "storeSettings": {
+              "type": "AzureBlobFSReadSettings",
+              "recursive": false,
+              "enablePartitionDiscovery": false
+            },
+            "formatSettings": {
+              "type": "DelimitedTextReadSettings"
+            }
+          },
+          "sink": {
+            "type": "ParquetSink",
+            "storeSettings": {
+              "type": "AzureBlobFSWriteSettings"
+            },
+            "formatSettings": {
+              "type": "ParquetWriteSettings"
+            }
+          },
+          "enableStaging": false,
+          "translator": {
+            "type": "TabularTranslator",
+            "typeConversion": true,
+            "typeConversionSettings": {
+              "allowDataTruncation": true,
+              "treatBooleanAsNumber": false
+            }
+          }
+        },
+        "inputs": [
+          {
+            "referenceName": "DS_ADLS_Raw_CSV",
+            "type": "DatasetReference",
+            "parameters": {
+              "p_file_path": {
+                "value": "@variables('raw_path')",
+                "type": "Expression"
+              }
+            }
+          }
+        ],
+        "outputs": [
+          {
+            "referenceName": "DS_ADLS_Bronze_Parquet",
+            "type": "DatasetReference",
+            "parameters": {
+              "p_year":  { "value": "@pipeline().parameters.p_year",  "type": "Expression" },
+              "p_month": { "value": "@pipeline().parameters.p_month", "type": "Expression" }
+            }
+          }
+        ]
+      },
+      {
+        "name": "Run_Bronze_Silver_Notebook",
+        "type": "DatabricksNotebook",
+        "dependsOn": [
+          { "activity": "Copy_Raw_To_Bronze", "dependencyConditions": ["Succeeded"] }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "notebookPath": "/Repos/SmartGear/PartB_Bronze_Silver",
+          "baseParameters": {
+            "p_year":  { "value": "@pipeline().parameters.p_year",  "type": "Expression" },
+            "p_month": { "value": "@pipeline().parameters.p_month", "type": "Expression" }
+          }
+        },
+        "linkedServiceName": {
+          "referenceName": "LS_Databricks",
+          "type": "LinkedServiceReference"
+        }
+      },
+      {
+        "name": "Run_Gold_Notebook",
+        "type": "DatabricksNotebook",
+        "dependsOn": [
+          { "activity": "Run_Bronze_Silver_Notebook", "dependencyConditions": ["Succeeded"] }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "notebookPath": "/Repos/SmartGear/PartC_Gold_Layer",
+          "baseParameters": {
+            "p_year":  { "value": "@pipeline().parameters.p_year",  "type": "Expression" },
+            "p_month": { "value": "@pipeline().parameters.p_month", "type": "Expression" }
+          }
+        },
+        "linkedServiceName": {
+          "referenceName": "LS_Databricks",
+          "type": "LinkedServiceReference"
+        }
+      },
+      {
+        "name": "Log_Pipeline_Success",
+        "type": "SetVariable",
+        "dependsOn": [
+          { "activity": "Run_Gold_Notebook", "dependencyConditions": ["Succeeded"] }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "variableName": "bronze_path",
+          "value": {
+            "value": "Pipeline completed at @{utcNow()} for year=@{pipeline().parameters.p_year}/month=@{pipeline().parameters.p_month}",
+            "type": "Expression"
+          }
+        }
+      }
+    ],
+    "triggers": [
+      {
+        "name": "DailyTrigger_0200UTC",
+        "type": "ScheduleTrigger",
+        "typeProperties": {
+          "recurrence": {
+            "frequency": "Day",
+            "interval": 1,
+            "startTime": "2025-01-01T02:00:00Z",
+            "timeZone": "UTC",
+            "schedule": {
+              "hours": [2],
+              "minutes": [0]
+            }
+          }
+        },
+        "pipelines": [
+          {
+            "pipelineReference": {
+              "referenceName": "SmartGear_RawToBronze_Pipeline",
+              "type": "PipelineReference"
+            },
+            "parameters": {
+              "p_year":  "@formatDateTime(utcNow(), 'yyyy')",
+              "p_month": "@formatDateTime(utcNow(), 'MM')"
+            }
+          }
+        ]
+      }
+    ],
+    "datasets": {
+      "DS_ADLS_Raw_CSV": {
+        "type": "DelimitedText",
+        "linkedServiceName": { "referenceName": "LS_ADLS_SmartGear", "type": "LinkedServiceReference" },
+        "parameters": { "p_file_path": { "type": "String" } },
+        "typeProperties": {
+          "location": {
+            "type": "AzureBlobFSLocation",
+            "fileSystem": "raw",
+            "folderPath": { "value": "@dataset().p_file_path", "type": "Expression" }
+          },
+          "columnDelimiter": ",",
+          "rowDelimiter": "\n",
+          "firstRowAsHeader": true,
+          "encodingName": "UTF-8"
+        }
+      },
+      "DS_ADLS_Bronze_Parquet": {
+        "type": "Parquet",
+        "linkedServiceName": { "referenceName": "LS_ADLS_SmartGear", "type": "LinkedServiceReference" },
+        "parameters": {
+          "p_year":  { "type": "String" },
+          "p_month": { "type": "String" }
+        },
+        "typeProperties": {
+          "location": {
+            "type": "AzureBlobFSLocation",
+            "fileSystem": "bronze",
+            "folderPath": {
+              "value": "sales/year=@{dataset().p_year}/month=@{dataset().p_month}",
+              "type": "Expression"
+            }
+          },
+          "compressionCodec": "snappy"
+        }
+      }
+    }
+  }
+}

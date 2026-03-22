@@ -1,0 +1,16 @@
+{
+  "run_timestamp": "2026-03-15T08:01:03.545365",
+  "dataset": "smartgear_sales.csv",
+  "total_records": 1000,
+  "valid_records": 1000,
+  "invalid_records": 0,
+  "data_quality_score": "100.0%",
+  "null_values": 0,
+  "invalid_quantity": 0,
+  "invalid_price": 0,
+  "invalid_region": 0,
+  "duplicate_order_ids": 0,
+  "invalid_dates": 0,
+  "unknown_products": 0,
+  "status": "CLEAN - No issues detected"
+}
